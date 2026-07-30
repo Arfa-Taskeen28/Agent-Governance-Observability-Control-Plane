@@ -1,5 +1,11 @@
 # Agent Governance & Observability Control Plane
 
+**🚀 Live demo: https://agent-control-plane-5624.onrender.com/** — the fleet
+dashboard, seeded with 14 days of telemetry for four agents (including a latency
+regression and an override spike that trip real alerts). Click an agent for its
+trend, then "Compliance report". First request may take ~30s to wake the
+free-tier instance.
+
 The capstone. A single dashboard that sits across every other agent in this
 portfolio and answers the question every enterprise buyer eventually asks:
 **"how do we know these agents are behaving correctly, and how do we prove it?"**
