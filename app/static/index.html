@@ -1,0 +1,273 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Agent Governance & Observability Control Plane</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    /* Validated data-viz palette (dataviz skill: validate_palette.js, light mode). */
+    :root {
+      --surface-1:#fcfcfb; --page:#f9f9f7; --ink:#0b0b0b; --ink-2:#52514e;
+      --muted:#898781; --grid:#e1e0d9; --baseline:#c3c2b7;
+      --series-1:#2a78d6; --s2:#1baf7a; --s3:#eda100; --s4:#008300;
+      --good:#0ca30c; --warning:#fab219; --serious:#ec835a; --critical:#d03b3b;
+      font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    }
+    body { background: var(--page); color: var(--ink); }
+    .card { background: var(--surface-1); border: 1px solid rgba(11,11,11,0.10); border-radius: 12px; }
+    .muted { color: var(--muted); } .ink2 { color: var(--ink-2); }
+    .tnum { font-variant-numeric: tabular-nums; }
+    .pill { font-size: 10px; font-weight: 600; padding: 1px 6px; border-radius: 5px; display:inline-flex; gap:3px; align-items:center; }
+    .fade-in { animation: fade .25s ease-out; } @keyframes fade { from {opacity:0;transform:translateY(4px)} to {opacity:1;transform:none} }
+  </style>
+</head>
+<body class="min-h-screen">
+  <header style="background:var(--surface-1); border-bottom:1px solid var(--grid)">
+    <div class="max-w-6xl mx-auto px-6 py-4 flex items-center justify-between">
+      <div class="flex items-center gap-3">
+        <div class="w-9 h-9 rounded-lg flex items-center justify-center text-white font-bold" style="background:var(--series-1)">◉</div>
+        <div>
+          <h1 class="font-semibold leading-tight">Agent Governance &amp; Observability Control Plane</h1>
+          <p class="text-xs muted">One dashboard across every agent: cost, latency, quality, human-override — and proof.</p>
+        </div>
+      </div>
+      <div class="flex items-center gap-4 text-sm">
+        <span id="tenantBadge" class="hidden px-2.5 py-1 rounded-full text-xs tnum" style="background:#eef;color:var(--ink-2)"></span>
+        <a href="/docs" class="hover:underline" style="color:var(--series-1)">API docs</a>
+      </div>
+    </div>
+  </header>
+
+  <main class="max-w-6xl mx-auto px-6 py-8 space-y-6">
+    <!-- Onboarding -->
+    <div id="onboard" class="card p-5 flex items-center gap-3">
+      <input id="tenantName" value="AcmeAI Operations" class="border rounded-lg px-3 py-2 text-sm" style="border-color:var(--grid)" />
+      <button id="startBtn" class="text-white text-sm font-medium rounded-lg px-4 py-2" style="background:var(--series-1)">Start control plane</button>
+      <span class="text-xs muted">No agents yet? The dashboard fills from telemetry your agents emit. For a demo, run <code>make demo</code> (or POST events) then Refresh.</span>
+    </div>
+
+    <!-- Fleet stat tiles (hero numbers) -->
+    <section id="fleet" class="hidden grid grid-cols-2 md:grid-cols-4 gap-4">
+      <div class="card p-4"><div class="text-3xl font-semibold tnum" id="fAgents">0</div><div class="text-xs muted mt-1">Agents monitored</div></div>
+      <div class="card p-4"><div class="text-3xl font-semibold tnum" id="fQueries">0</div><div class="text-xs muted mt-1">Queries (7d)</div></div>
+      <div class="card p-4"><div class="text-3xl font-semibold tnum" id="fCost">$0</div><div class="text-xs muted mt-1">Total cost (7d)</div></div>
+      <div class="card p-4"><div class="text-3xl font-semibold tnum" id="fBreach">0</div><div class="text-xs muted mt-1">Agents breaching SLO</div></div>
+    </section>
+
+    <div id="body" class="hidden grid gap-6 lg:grid-cols-12">
+      <!-- Scorecards -->
+      <section class="lg:col-span-7 space-y-3">
+        <div class="flex items-center justify-between">
+          <h2 class="font-semibold">Agent scorecards <span class="text-xs muted">· 7-day window</span></h2>
+          <button id="refresh" class="text-xs hover:underline" style="color:var(--series-1)">Refresh</button>
+        </div>
+        <div id="cards" class="space-y-3"></div>
+      </section>
+
+      <!-- Trend + alerts -->
+      <section class="lg:col-span-5 space-y-4">
+        <div class="card p-4">
+          <div class="flex items-center justify-between mb-1">
+            <h2 class="font-semibold text-sm" id="trendTitle">p99 latency trend</h2>
+            <select id="trendMetric" class="text-xs border rounded px-1 py-0.5" style="border-color:var(--grid)">
+              <option value="latency_p99_ms">p99 latency (ms)</option>
+              <option value="human_override_rate">override rate</option>
+              <option value="cost_per_query_usd">cost / query</option>
+            </select>
+          </div>
+          <p class="text-xs muted mb-2" id="trendSub">Select an agent to see 14-day drift.</p>
+          <svg id="chart" viewBox="0 0 360 140" width="100%" height="140" role="img"></svg>
+        </div>
+
+        <div class="card p-4">
+          <h2 class="font-semibold text-sm mb-2">Alerts</h2>
+          <div id="alerts" class="space-y-2 text-xs"><p class="muted">No alerts.</p></div>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <!-- Compliance modal -->
+  <div id="modal" class="hidden fixed inset-0 bg-black/40 flex items-center justify-center p-6 z-50">
+    <div class="card max-w-2xl w-full max-h-[80vh] overflow-auto p-6">
+      <div class="flex items-center justify-between mb-3">
+        <h3 class="font-semibold">Compliance report</h3>
+        <div class="flex gap-2">
+          <button id="dlReport" class="text-xs px-2 py-1 rounded text-white" style="background:var(--series-1)">Download .md</button>
+          <button id="closeModal" class="text-xs px-2 py-1 rounded" style="background:var(--grid)">Close</button>
+        </div>
+      </div>
+      <pre id="reportBody" class="text-xs whitespace-pre-wrap ink2"></pre>
+    </div>
+  </div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let token = localStorage.getItem("cp_token") || null;
+let tenantId = localStorage.getItem("cp_tenant") || null;
+let selectedAgent = null;
+const HUES = ["var(--series-1)", "var(--s2)", "var(--s3)", "var(--s4)"];
+
+async function api(path, opts = {}) {
+  const headers = { "Content-Type": "application/json", ...(opts.headers || {}) };
+  if (token) headers["Authorization"] = "Bearer " + token;
+  const res = await fetch(path, { ...opts, headers });
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || res.statusText);
+  return res.json();
+}
+
+function signedIn() {
+  $("onboard").classList.add("hidden");
+  $("fleet").classList.remove("hidden"); $("body").classList.remove("hidden");
+  $("tenantBadge").classList.remove("hidden"); $("tenantBadge").textContent = "tenant " + tenantId.slice(0,8);
+  refresh();
+}
+
+$("startBtn").onclick = async () => {
+  try {
+    const out = await api("/tenants/signup", { method:"POST", body: JSON.stringify({ name: $("tenantName").value })});
+    token = out.access_token; tenantId = out.tenant_id;
+    localStorage.setItem("cp_token", token); localStorage.setItem("cp_tenant", tenantId);
+    signedIn();
+  } catch (e) { alert("Failed: " + e.message); }
+};
+
+// Status pill: color + ICON + LABEL (never color alone — dataviz status rule).
+function statusPill(ok, okText, badText) {
+  const c = ok ? "var(--good)" : "var(--critical)";
+  const icon = ok ? "✓" : "▲";
+  return `<span class="pill" style="background:${c}1a;color:${c}">${icon} ${ok ? okText : badText}</span>`;
+}
+
+function scorecardCard(sc, i) {
+  const dot = `<span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${HUES[i%4]}"></span>`;
+  const cpq = "$" + (sc.cost_per_query_usd ?? 0).toFixed(5);
+  const q = sc.avg_quality_score == null ? "n/a" : sc.avg_quality_score.toFixed(2);
+  return `<div class="card p-4 fade-in cursor-pointer" onclick='selectAgent("${sc.agent_id}")'>
+    <div class="flex items-center justify-between">
+      <div class="flex items-center gap-2">${dot}<span class="font-medium">${sc.agent_name}</span>
+        <span class="pill" style="background:#eee;color:var(--ink-2)">${sc.kind}</span>
+        <span class="pill" style="background:#eee;color:var(--ink-2)">risk: ${sc.risk_category}</span></div>
+      <button class="text-xs hover:underline" style="color:var(--series-1)" onclick='event.stopPropagation();report("${sc.agent_id}")'>Compliance report →</button>
+    </div>
+    <div class="grid grid-cols-4 gap-2 mt-3 text-sm tnum">
+      <div><div class="muted text-xs">queries</div>${sc.queries}</div>
+      <div><div class="muted text-xs">cost/query</div>${cpq}</div>
+      <div><div class="muted text-xs">p99 latency</div>${sc.latency_p99_ms.toFixed(0)}ms</div>
+      <div><div class="muted text-xs">quality</div>${q}</div>
+    </div>
+    <div class="flex gap-2 mt-3">
+      ${statusPill(sc.slo_latency_ok, "latency within SLO", "p99 SLO breach")}
+      ${statusPill(sc.override_ok, "override ok", "override rate high")}
+      ${statusPill(sc.quality_ok, "quality ok", "quality below floor")}
+    </div></div>`;
+}
+
+async function refresh() {
+  try {
+    const ov = await api("/overview?window_days=7");
+    $("fAgents").textContent = ov.agent_count;
+    $("fQueries").textContent = ov.total_queries.toLocaleString();
+    $("fCost").textContent = "$" + ov.total_cost_usd.toFixed(2);
+    const breach = $("fBreach"); breach.textContent = ov.agents_breaching_slo;
+    breach.style.color = ov.agents_breaching_slo > 0 ? "var(--critical)" : "var(--good)";
+    $("cards").innerHTML = ov.scorecards.map((sc,i)=>scorecardCard(sc,i)).join("") || '<p class="muted text-sm">No agents yet. Run <code>make demo</code>.</p>';
+    if (!selectedAgent && ov.scorecards[0]) selectAgent(ov.scorecards[0].agent_id);
+    await loadAlerts();
+  } catch { /* not signed in */ }
+}
+$("refresh").onclick = refresh;
+
+async function loadAlerts() {
+  const alerts = await api("/alerts");
+  $("alerts").innerHTML = alerts.length ? alerts.slice(0,8).map(a => {
+    const crit = a.severity === "critical";
+    const c = crit ? "var(--critical)" : "var(--warning)";
+    return `<div class="flex items-start gap-2"><span class="pill" style="background:${c}1a;color:${c}">${crit?"▲":"⚠"} ${a.severity}</span>
+      <span class="ink2">${a.message}</span></div>`;
+  }).join("") : '<p class="muted">No alerts.</p>';
+}
+
+window.selectAgent = async (id) => {
+  selectedAgent = id;
+  await drawTrend();
+};
+$("trendMetric").onchange = drawTrend;
+
+async function drawTrend() {
+  if (!selectedAgent) return;
+  const metric = $("trendMetric").value;
+  const trend = await api(`/agents/${selectedAgent}/trend?days=14`);
+  const label = $("trendMetric").selectedOptions[0].text;
+  $("trendTitle").textContent = label + " trend";
+  $("trendSub").textContent = `${trend.length} days · is quality/latency drifting?`;
+  drawLineChart(trend.map(p => ({ x: p.date, y: p[metric] ?? 0 })), label);
+}
+
+// Single-series SVG line chart (dataviz: 2px line, hairline grid, muted axis,
+// hover crosshair+tooltip, direct min/max labels). One series -> no legend.
+function drawLineChart(data, label) {
+  const svg = $("chart"); const W=360,H=140, pad={l:38,r:10,t:10,b:20};
+  if (!data.length) { svg.innerHTML = ""; return; }
+  const ys = data.map(d=>d.y), ymin=Math.min(...ys), ymax=Math.max(...ys)||1;
+  const span = (ymax-ymin)||1;
+  const px = i => pad.l + i*(W-pad.l-pad.r)/Math.max(1,data.length-1);
+  const py = v => H-pad.b - ((v-ymin)/span)*(H-pad.t-pad.b);
+  let g = "";
+  // hairline gridlines + y labels (3 ticks)
+  for (let t=0;t<=2;t++){ const v=ymin+span*t/2, y=py(v);
+    g += `<line x1="${pad.l}" y1="${y}" x2="${W-pad.r}" y2="${y}" stroke="var(--grid)" stroke-width="1"/>`;
+    g += `<text x="${pad.l-4}" y="${y+3}" text-anchor="end" font-size="8" fill="var(--muted)" class="tnum">${fmt(v)}</text>`; }
+  // baseline
+  g += `<line x1="${pad.l}" y1="${H-pad.b}" x2="${W-pad.r}" y2="${H-pad.b}" stroke="var(--baseline)" stroke-width="1"/>`;
+  // the 2px series line
+  const pts = data.map((d,i)=>`${px(i)},${py(d.y)}`).join(" ");
+  g += `<polyline points="${pts}" fill="none" stroke="var(--series-1)" stroke-width="2" stroke-linejoin="round"/>`;
+  // end-point marker + direct label (last value)
+  const last=data.length-1;
+  g += `<circle cx="${px(last)}" cy="${py(data[last].y)}" r="3.5" fill="var(--series-1)" stroke="var(--surface-1)" stroke-width="2"/>`;
+  // x end labels
+  g += `<text x="${pad.l}" y="${H-6}" font-size="8" fill="var(--muted)">${data[0].x.slice(5)}</text>`;
+  g += `<text x="${W-pad.r}" y="${H-6}" text-anchor="end" font-size="8" fill="var(--muted)">${data[last].x.slice(5)}</text>`;
+  // hover layer
+  g += `<rect id="hzone" x="${pad.l}" y="${pad.t}" width="${W-pad.l-pad.r}" height="${H-pad.t-pad.b}" fill="transparent"/>`;
+  g += `<line id="cross" x1="0" y1="${pad.t}" x2="0" y2="${H-pad.b}" stroke="var(--baseline)" stroke-width="1" style="display:none"/>`;
+  g += `<circle id="hdot" r="4" fill="var(--series-1)" stroke="var(--surface-1)" stroke-width="2" style="display:none"/>`;
+  g += `<g id="tip" style="display:none"><rect x="0" y="0" width="86" height="30" rx="4" fill="var(--ink)"/><text id="tipx" x="6" y="12" font-size="8" fill="#fff"></text><text id="tipy" x="6" y="24" font-size="9" fill="#fff" class="tnum"></text></g>`;
+  svg.innerHTML = g;
+  const zone = $("hzone");
+  zone.onmousemove = (e) => {
+    const r = svg.getBoundingClientRect(); const sx = (e.clientX-r.left)*(W/r.width);
+    let i = Math.round((sx-pad.l)/((W-pad.l-pad.r)/Math.max(1,data.length-1)));
+    i = Math.max(0, Math.min(data.length-1, i));
+    const x=px(i), y=py(data[i].y);
+    $("cross").setAttribute("x1",x); $("cross").setAttribute("x2",x); $("cross").style.display="";
+    $("hdot").setAttribute("cx",x); $("hdot").setAttribute("cy",y); $("hdot").style.display="";
+    const tip=$("tip"); tip.style.display=""; const tx=Math.min(x+6,W-92);
+    tip.setAttribute("transform",`translate(${tx},${Math.max(2,y-34)})`);
+    $("tipx").textContent=data[i].x; $("tipy").textContent=label+": "+fmt(data[i].y);
+  };
+  zone.onmouseleave = () => { ["cross","hdot","tip"].forEach(id=>$(id).style.display="none"); };
+}
+function fmt(v){ return v>=100? v.toFixed(0) : v>=1? v.toFixed(1) : v.toFixed(4); }
+
+window.report = async (id) => {
+  const r = await api(`/agents/${id}/compliance-report?window_days=30`);
+  $("reportBody").textContent = r.markdown;
+  // Download as a blob (an <a href> can't carry the auth header).
+  $("dlReport").onclick = () => {
+    const blob = new Blob([r.markdown], { type: "text/markdown" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = `compliance-${id.slice(0,8)}.md`; a.click();
+    URL.revokeObjectURL(url);
+  };
+  $("modal").classList.remove("hidden");
+};
+$("closeModal").onclick = () => $("modal").classList.add("hidden");
+
+if (token && tenantId) signedIn();
+</script>
+</body>
+</html>

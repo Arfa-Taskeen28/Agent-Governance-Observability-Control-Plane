@@ -1,0 +1,33 @@
+# Render blueprint (infrastructure-as-code).
+# Deploy: Render dashboard -> New -> Blueprint -> connect this repo -> Apply.
+# Provisions the web service + a Postgres database, auto-deploys on push.
+#
+# The control plane ingests telemetry from your agents and serves the dashboard.
+# Populate it via each agent's telemetry emit, or run scripts/simulate.py against
+# the live URL for a demo. Offline-friendly; no secrets required.
+
+services:
+  - type: web
+    name: agent-control-plane
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: ENVIRONMENT
+        value: prod
+      # Optional: a Slack incoming webhook to receive threshold-breach alerts.
+      - key: SLACK_WEBHOOK_URL
+        sync: false
+      - key: JWT_SECRET
+        generateValue: true
+      - key: DATABASE_URL
+        fromDatabase:
+          name: agent-control-plane-db
+          property: connectionString
+
+databases:
+  - name: agent-control-plane-db
+    plan: free
+    postgresMajorVersion: "16"
